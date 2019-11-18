@@ -1,0 +1,243 @@
+---
+title: "Exercise 8"
+author: "Adriano Martinelli"
+date: "04/11/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+### Question 1. Simulate data from the sine curve (from 0 to 2*pi) with Gaussian noise added (as shown in the lecture). Try and “normalize” the sine curve. That is, subtract the estimate of the lowess/loess curve from the simulated data, such that, if your normalization succeeds, you are left with normally distributed data centred around zero. After this: i) make a plot of the normalized data; ii) make a plot of the difference between the truth (sine curve) and the loess/lowess estimate; iii) create a quantile-quantile (against Gaussian) plot of the normalized data. Comment on your result. Does it look (sufficiently) Gaussian? You may need to play with parameters.
+
+```{r}
+x <- runif(1000, 0, 2*pi)
+y <- sin(x) + rnorm(1000, sd = .3)
+
+plot(x,y)
+lines(lowess(y~x, f=2/3), col="blue", lwd=3)
+lines(lowess(y~x, f=1/3), col="black", lwd=3)
+lines(lowess(y~x, f=1/10), col="orange", lwd=3)
+```
+
+```{r}
+library(stats)
+library(ggplot2)
+library(tidyverse)
+
+n_smooth = 10
+f = seq(0.01,1, length.out = n_smooth)
+
+idx = sort(x, index.return = TRUE)$ix
+
+t = lapply(f, function(f){lowess(y~x, f=f)})
+
+fit = sapply(t, function(x){
+  residuals = x$y - y[idx]
+  #print(sum(residuals))
+  #residuals
+  })
+
+goodnessOfFit = apply(fit, 2,function(x){
+  shapiro.test(x)$p.value
+})
+
+bestFit.idx = which(max(goodnessOfFit) == goodnessOfFit)
+worstFit.idx = which(min(goodnessOfFit) == goodnessOfFit)
+
+plot(f,goodnessOfFit, main = 'Goodness of fit as a function of smoother span', xlab = 'Smoother span', ylab = 'Shapiro P-value', type = 'o')
+
+data = data.frame(fit)
+colnames(data) = factor(paste0('f=',round(f, 2)))
+data = pivot_longer(data, cols = 1:n_smooth, names_to = 'f', values_to = 'residual')
+
+g = ggplot(data = data, aes(x = residual)) + geom_histogram() + facet_wrap(~f, scales = 'free') 
+g
+
+g1 = ggplot(data = data) + stat_qq(aes(sample = residual)) + stat_qq_line(aes(sample = residual)) + facet_wrap(~f, scales = 'free')
+g1
+
+plot(x,y)
+lines(lowess(y~x, f=f[bestFit.idx]), col="blue", lwd=3)
+lines(lowess(y~x, f=f[worstFit.idx]), col="green", lwd=3, lty = 1)
+lines(lowess(y~x, f=f[n_smooth]), col="yellow", lwd=3, lty = 3)
+lines(lowess(y~x, f=f[1]), col="orange", lwd=3, lty = 3)
+points(x, sin(x), col = 'red', lwd = 0.5, cex = 0.5)
+legend('topright',legend = c('Best Fit', 'Worst Fit', 'Max span', 'Min span','Sinus'), col = c('blue', 'green', 'yellow','orange','red'), lty = 1)
+
+#normalised data
+plot(seq(length(x)), fit[,bestFit.idx], main = 'Normalised data')
+
+```
+
+
+```{r}
+qqnorm(fit[,worstFit.idx], main = 'Worst fit')
+qqline(fit[,worstFit.idx])
+
+qqnorm(fit[,bestFit.idx], main = 'Best fit')
+qqline(fit[,bestFit.idx])
+```
+
+I used the Shapiro–Wilk test to obtain a p-value for the hypthesis that the residual distribution is normal since I thought it was a bit hard to decide which is the best fit from qqplot and histograms alone. We can see that for very low smoother span ``f`` we fit the noise. Taking all points into account, i.e. ``f = 1`` we fit a linear line to the data. The best fit is obtaine for f =``r f[bestFit.idx]``. The qqplot suggests that the distriubtion follows quite closely a normal distribution. <!--It is surprising how much off the best fit can be (observation based on multiple runs of script). It seems that the curve is rarely very close to the sinus curve but nevertheless acheives a good normal distribution. But as we can see in the Goodness of Fit plot, there are three smoother span values which approximate the true sinus curve very good.-->
+
+### Question 2. Take the data from Exercise 7 and produce an MDS plot again, but this time colour the points according to the covariate in the samples table: libtype (SE = single end, PE = paired end); perhaps also label the points on the MDS plot using the shortname column to make them easy to distinguish. Comment on the relative positions of the samples.
+
+```{r}
+library(edgeR)
+
+(samples <- read.table("samples.txt", header=TRUE,
+                      row.names=5, stringsAsFactors=FALSE))
+
+counts <- readDGE(samples$countfile)$counts
+(grp <- gsub("\\-.[0-9]*","",colnames(counts)))
+group <- factor(c(1,1,1,2,2,2,2))
+y <- DGEList(counts= counts,group=group)
+
+```
+
+```{r}
+plotMDS(y, top=200, col=c(factor(samples$libtype)), cex = 0.5, labels = samples$shortname)
+```
+
+### Question 3. Put a factor variable for the libtype covariate in the design matrix and redo the edgeR or limma analysis from Exercise 7 (i.e., include also the biological factor of interest, knockout state, in the design matrix). Compare the set of genes called DE from last week’s exercise (i.e., without accounting for the covariate) to this new analysis. Identify and plot (normalized) expression levels of a gene that is affected solely by library type.
+
+In a frist step I compute the DE genes for the two different models. Once taking the library type into account and once (as in ex.  7) not.
+```{r}
+libtype = factor(samples$libtype)
+
+y <- calcNormFactors(y)
+design <- model.matrix(~group)
+design2 <- model.matrix(~group + libtype)
+print(design)
+print(design2)
+
+y <- estimateDisp(y,design)
+y2 = estimateDisp(y,design2)
+
+#To perform likelihood ratio tests:
+fit <- glmFit(y,design)
+lrt <- glmLRT(fit,coef=2)
+fit2 <- glmFit(y2,design2)
+lrt2 <- glmLRT(fit2,coef=2)
+topTags(lrt)
+topTags(lrt2)
+```
+
+```{r}
+library(UpSetR)
+
+comp = data.frame(DE_Ex7 = decideTestsDGE(lrt)[,1], DE_Ex8 = decideTestsDGE(lrt2)[,1])
+comp[comp == -1] = 1
+
+#intersections = list(list('DE_Ex7', NULL),
+#                     list('DE_Ex8', NULL),
+#                     list('DE_Ex8','DE_Ex7'))
+
+upset(comp, mainbar.y.label = "Differentially expressed genes intersections", sets.x.label = "Genes Per design", empty.intersections = TRUE)
+```
+
+To investigate the effect on the differentially expressed genes I use a upset plot. We can see that a lot more genes are detected to be differentially expressed if we correct for the library type (``r sum(abs(decideTestsDGE(lrt2)))`` vs ``r sum(abs(decideTestsDGE(lrt)))``). Furthermor genes detected to be DE without taking the library type into account are all recovered by the model taking the library type into account. 
+
+```{r}
+#find genes affected by library type
+lrt3 <- glmLRT(fit2,coef=3)
+idx3 = decideTestsDGE(lrt3)[,1] != 0
+
+#among the affected genes (by library type) find those not affected by treatment
+lrt2 <- glmLRT(fit2,coef=2)
+idx2 = decideTestsDGE(lrt2)[idx3,1] == 0
+
+#plot unnormlised counts
+data = data.frame(experiment = names(y@.Data[[1]][idx3,][idx2,][3,]),
+                  counts = y@.Data[[1]][idx3,][idx2,][3,],
+                  norm.factor = y$samples['norm.factors'],
+                  norm.counts = y@.Data[[1]][idx3,][idx2,][3,]*y$samples['norm.factors'][[1]])
+
+```
+
+Finally we find the genes that are affected by library type only. These are in total ``r length(idx)`` genes. In red we see the normalised counts and in black the raw counts. 
+
+```{r}
+g3 = ggplot(data = data)+
+  geom_point(aes(x = seq(length(experiment)), y = counts), colour = 'black') +
+  geom_point(aes(x = seq(length(experiment)), y = norm.counts), colour = 'red') +
+  scale_x_continuous(labels = levels(data$experiment), breaks = seq(length(data$experiment)))
+g3
+```
+
+
+### Question 4. Fix the above code to run a standard DEXSeq analysis and plot one of the top differentially spliced genes – for example, see the plotDEXSeq() function.
+
+Here we run an anlysis for DE of exons induced by the condition of the experiment. For that we specify a full model and a reduced model (see R code) and follow the DEXSeq workflow. 
+```{r}
+library(pasilla)
+(sdir <- file.path(system.file(package="pasilla"), "extdata"))
+anno <- file.path(sdir, "Dmel.BDGP5.25.62.DEXSeq.chr.gff")
+
+samplesX = data.frame(cond = rep( c("trt","untrt"), c(3,4) ),
+                      type = c("SE","PE","PE","SE","SE","PE","PE"),
+                      countfile = dir(sdir,pattern="fb.txt"),
+                      stringsAsFactors = TRUE)
+samplesX
+```
+
+```{r}
+library(DEXSeq)
+dxd <- DEXSeqDataSetFromHTSeq(
+           countfiles=file.path(sdir, samplesX$countfile),
+           sampleData = samplesX,
+           design = ~ sample + exon + type:exon + cond:exon)
+           #~ sample + exon + cond:exon)
+
+formulaFullModel    =  ~ sample + exon + type:exon + cond:exon
+formulaReducedModel =  ~ sample + exon + type:exon 
+
+dxd = estimateSizeFactors( dxd )
+dxd = estimateDispersions( dxd, formula = formulaFullModel )
+dxd = testForDEU( dxd, 
+    reducedModel = formulaReducedModel, 
+        fullModel = formulaFullModel )
+plotDispEsts( dxd )
+
+dxr1 = DEXSeqResults( dxd )
+
+dxr1.idx= sort(dxr1$padj, decreasing = FALSE ,index.return = TRUE, na.last = TRUE)$ix
+#plotDEXSeq( dxr1, dxr1$groupID[dxr1.idx[1000]], legend=TRUE, cex.axis=1.2, cex=1.3, lwd=2, fitExpToVar="cond")
+```
+
+```{r}
+dxr1[dxr1.idx[11],]
+idx = seq(dim(dxr1)[1])[grepl('FBgn0261451', rownames(dxr1))]
+
+#Print overview some exons of gene
+#print(head(dxr1[idx,]))
+
+#Print DE exons
+idx.p = dxr1[idx,]$padj < 0.05
+idx.p[is.na(idx.p)] = FALSE
+print(dxr1[idx,][idx.p,])
+
+#Plot adj.pvalues and exon number
+
+data = data.frame(featureID = dxr1[idx,]$featureID, pvalue = dxr1[idx,]$padj)
+g3 = ggplot(data = data)+
+  geom_point(aes(x = seq(length(featureID)), y = pvalue), colour = 'black') +
+  scale_x_continuous(labels = levels(data$featureID), breaks = seq(length(data$featureID)))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(title = 'Exon DE for gene FBgn0261451')
+
+g3
+  
+```
+
+As an example we use gene FBgn0261451. This gene has ``r length(dxr1$featureID[idx])`` exons and we can inspect the DE analysis results in the ``dxr1``object. We can see that there are ``r sum(idx.p)`` differentially expressed exons and the plot shows the corresponding adjusted p-values.
+
+```{r}
+#This plot function seems not to work for me
+#is this because we have no meta data ? in the dxr1$genomicData column?
+
+#plotDEXSeq( dxr1, dxr1[dxr1.idx[10],]$groupID, legend=TRUE, cex.axis=1.2, cex=1.3, lwd=2, fitExpToVar = 'cond')
+```
+
