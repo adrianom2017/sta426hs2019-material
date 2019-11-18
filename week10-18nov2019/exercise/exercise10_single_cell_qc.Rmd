@@ -1,0 +1,70 @@
+---
+title: "Exercise 10: Single-cell RNA-seq session"
+author: "Hubert Rehrauer (adapted from Mark Robinson, and Lukas Weber)"
+date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
+output:
+  html_document:
+    theme: united
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set()
+```
+
+```{r print_solutions, include = FALSE}
+# To show solutions
+print_solutions <- FALSE
+```
+
+
+For this exercise, we will use the single-cell RNA-seq dataset `Deng2014`, downloaded from the `conquer` database ([Soneson and Robinson, 2018](https://www.ncbi.nlm.nih.gov/pubmed/29481549)), available here: http://imlspenticton.uzh.ch:3838/conquer/. The `Deng2014` dataset contains 291 single cells from mouse (*mus musculus*), from a study investigating mouse development from zygote to blastocyst, and adult liver. For more details on the dataset, see the paper by [Deng et al. (2014)](https://www.ncbi.nlm.nih.gov/pubmed/24408435).
+
+- Download the `Deng2014` dataset from the `conquer` database by clicking `Download .rds` in the `MultiAssayExperiment` column.
+
+- Re-run the `Seurat` analysis pipeline on this dataset. Start by creating a `Seurat` object from the count data (and any associated metadata) in the `MultiAssayExperiment` object. Then, you can follow the main analysis steps from the demonstration: gene and cell filtering, dimensionality reduction, and clustering
+
+- The aim is to answer the following questions:
+
+    - How many clusters does `Seurat` generate? Does this seem like a reasonable number of 'cell types' for this dataset? You can use the [`scater` report](http://imlspenticton.uzh.ch/robinson_lab/conquer/report-scater/GSE45719_scater.html) as a guide. Are the clusters clearly separated?
+
+    - Generate a tSNE (or UMAP or other dimension reduction) plot, and try to match the clusters to the marker genes in order to identify the clusters (cell populations).
+    
+    
+```{r, message=FALSE, warning=FALSE}
+# Load packages
+library(MultiAssayExperiment)
+```
+
+```{r}
+# Download file
+url <- "http://imlspenticton.uzh.ch/robinson_lab/conquer/data-mae/GSE45719.rds"
+dir.create("data")
+filename <- file.path("data", basename(url))
+
+if(!file.exists(filename)) {
+  download.file(url, filename)
+}
+```
+
+```{r}
+# Load data
+gse45719 <- readRDS("data/GSE45719.rds")
+experiments(gse45719)
+```
+
+The object contains both 'gene' and 'tx' (transcript) information. Here, we will use the gene information only and we can extract it as a `RangedSummarizedExperiment` object.
+
+```{r}
+# Extract gene data as Bioconductor 'RangedSummarizedExperiment' object
+gse45719_gene <- experiments(gse45719)[["gene"]]
+gse45719_gene
+
+# Get 'counts' table
+counts <- assays(gse45719_gene)[["count"]]
+
+# Get column meta-data (cell names) from original 'MultiAssayExperiment' object
+meta.data <- data.frame(colData(gse45719)[ , c("source_name_ch1", "description")])
+```
+
